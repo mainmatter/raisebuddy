@@ -88,13 +88,31 @@ class RaiseCalculator {
       });
 
     // Full-time +500 increments
-    for (let i = 1; i <= this._cfg.INCREMENT_STEPS; i++) {
+    // Determine the percent target (as percentage) and the required steps to reach it.
+    // We'll still compute enough +500 steps to cover the target, but we stop adding
+    // rows once the computed raise percent would exceed the percent target (so the
+    // table goes up to the configured percent target exactly).
+    const percentTargetIncrease =
+      baseFull * this._cfg.PERCENT_STEP * this._cfg.PERCENT_STEPS;
+    const percentTargetPct =
+      this._cfg.PERCENT_STEP * this._cfg.PERCENT_STEPS * 100;
+    const requiredIncSteps =
+      this._cfg.INCREMENT_AMOUNT > 0 && baseFull > 0
+        ? Math.ceil(percentTargetIncrease / this._cfg.INCREMENT_AMOUNT)
+        : this._cfg.INCREMENT_STEPS;
+    const ftSteps = Math.max(this._cfg.INCREMENT_STEPS, requiredIncSteps);
+
+    for (let i = 1; i <= ftSteps; i++) {
       const newFull = baseFull + this._cfg.INCREMENT_AMOUNT * i;
       const newPart = newFull * partRatio;
       const newMonthly = newPart / 12;
       const raisePct =
         baseFull > 0 ? ((newFull - baseFull) / baseFull) * 100 : 0;
       const monthlyDiff = newMonthly - baseMonthly;
+
+      // Stop adding full-time +500 increments once the percent raise would exceed the percent target.
+      // Allow equal to the target (<=). Only break when we have a valid baseFull to compare against.
+      if (baseFull > 0 && raisePct > percentTargetPct) break;
 
       pushCandidate({
         source: "FT",
@@ -108,13 +126,19 @@ class RaiseCalculator {
     }
 
     // Part-time +500 increments (implied full-time)
-    for (let i = 1; i <= this._cfg.INCREMENT_STEPS; i++) {
+    // Use the same number of steps as full-time increments but stop once the percent target is exceeded.
+    const ptSteps = ftSteps;
+    for (let i = 1; i <= ptSteps; i++) {
       const newPartBase = basePart + this._cfg.INCREMENT_AMOUNT * i;
       const impliedFull = partRatio > 0 ? newPartBase / partRatio : baseFull;
       const newMonthly = newPartBase / 12;
       const raisePct =
         baseFull > 0 ? ((impliedFull - baseFull) / baseFull) * 100 : 0;
       const monthlyDiff = newMonthly - baseMonthly;
+
+      // Stop adding part-time +500 increments once the percent raise would exceed the percent target.
+      // Only break when baseFull is positive so we don't prematurely stop when baseFull is zero.
+      if (baseFull > 0 && raisePct > percentTargetPct) break;
 
       pushCandidate({
         source: "PT",
@@ -190,14 +214,51 @@ class RaiseCalculator {
       // determine which cell to snap/highlight
       const snap = hasFT ? "FT" : hasPT ? "PT" : hasPCT ? "PCT" : null;
 
-      this._appendRowForRendering(rep, { snap, currency });
+      // Additional "round" highlighting:
+      // - highlightFull: any candidate in this group sits on an exact INCREMENT_AMOUNT boundary (e.g. multiple of 500)
+      // - highlightPart: same for part-time yearly amount
+      // - highlightPct: any candidate in this group falls exactly on a percent step (e.g. 0.5% increments)
+      const percentStepPct = this._cfg.PERCENT_STEP * 100;
+      const epsilon = 1e-6;
+
+      const highlightFull = group.some((g) => {
+        if (!Number.isFinite(g.fullYearly)) return false;
+        const ratio = g.fullYearly / this._cfg.INCREMENT_AMOUNT;
+        return Math.abs(ratio - Math.round(ratio)) < epsilon;
+      });
+
+      const highlightPart = group.some((g) => {
+        if (!Number.isFinite(g.partYearly)) return false;
+        const ratio = g.partYearly / this._cfg.INCREMENT_AMOUNT;
+        return Math.abs(ratio - Math.round(ratio)) < epsilon;
+      });
+
+      const highlightPct = group.some((g) => {
+        if (!Number.isFinite(g.raisePct)) return false;
+        const ratio = g.raisePct / percentStepPct;
+        return Math.abs(ratio - Math.round(ratio)) < epsilon;
+      });
+
+      this._appendRowForRendering(rep, {
+        snap,
+        currency,
+        highlightFull,
+        highlightPart,
+        highlightPct,
+      });
     }
   }
 
   // ---------- Helpers ----------
 
   _appendRowForRendering(candidate, opts = {}) {
-    const { snap = null, currency = "EUR" } = opts;
+    const {
+      snap = null,
+      currency = "EUR",
+      highlightFull = false,
+      highlightPart = false,
+      highlightPct = false,
+    } = opts;
 
     // Build column values (strings/html)
     // Columns: Yearly (full-time), Yearly (part-time), Monthly, Raise (%), Monthly difference
@@ -211,19 +272,19 @@ class RaiseCalculator {
       currency,
     );
 
-    // Render snapped cell with <strong>
+    // Render snapped cell with <strong> or apply "round" highlights as requested
     const fullCell =
-      snap === "FT"
+      snap === "FT" || highlightFull
         ? { html: `<strong>${fullVal}</strong>` }
         : { text: fullVal };
 
     const partCell =
-      snap === "PT"
+      snap === "PT" || highlightPart
         ? { html: `<strong>${partVal}</strong>`, className: "part-col" }
         : { text: partVal, className: "part-col" };
 
     const pctCell =
-      snap === "PCT"
+      snap === "PCT" || highlightPct
         ? { html: `<strong>${raisePctVal}</strong>` }
         : { text: raisePctVal };
 
