@@ -41,7 +41,7 @@ class RaiseCalculator {
         INCREMENT_AMOUNT: 500,
         INCREMENT_STEPS: 10,
         PERCENT_STEP: 0.5 / 100,
-        PERCENT_STEPS: 10,
+        PERCENT_STEPS: 20,
       },
       config,
     );
