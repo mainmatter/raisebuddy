@@ -1,0 +1,42 @@
+/* raisor/css/styles.css
+ *
+ * External stylesheet for RaiseBuddy.
+ * - Moved small page-scoped styles previously embedded in `index.html` into this file:
+ *   - monospace, right-aligned numeric table layout for currency columns
+ *   - page padding and a small responsive padding tweak
+ * - Continue relying on Bootstrap utilities for visual styling and utilities.
+ * - Do NOT override Bootstrap color utility classes (e.g. bg-success, bg-warning, etc.).
+ *
+ * Notes:
+ * - Keep rules small and focused on layout/typography only.
+ * - When hiding columns via JS, prefer adding/removing Bootstrap's `d-none` on both <th> and corresponding <td>.
+ */
+
+/* Page padding */
+body {
+    padding: 1rem;
+}
+
+/* Monospace numbers and right-aligned cells for clean vertical alignment */
+table.table,
+table.table th,
+table.table td {
+    /* System and wide-coverage monospaced stack */
+    font-family:
+        ui-monospace, "SFMono-Regular", Menlo, Monaco, "Roboto Mono",
+        "Courier New", monospace;
+    text-align: right;
+    vertical-align: middle;
+}
+
+/* Table headers: */
+table.table th {
+    text-align: right;
+}
+
+/* Small responsive tweak for very narrow viewports */
+@media (max-width: 420px) {
+    body {
+        padding: 0.75rem;
+    }
+}

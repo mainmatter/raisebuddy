@@ -1,0 +1,261 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width,initial-scale=1" />
+    <title>RaiseBuddy</title>
+    <!-- Bootstrap 5 CDN -->
+    <link
+      href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/css/bootstrap.min.css"
+      rel="stylesheet"
+    />
+    <link rel="stylesheet" href="css/styles.css" />
+  </head>
+  <body>
+    <div class="container">
+      <div class="d-flex align-items-center justify-content-between mb-3">
+        <h3 class="mb-0">
+          <a href="/" class="text-decoration-none text-dark">RaiseBuddy</a>
+        </h3>
+        <div>
+          <button
+            id="copyLink"
+            type="button"
+            class="btn btn-sm btn-outline-primary"
+          >
+            Copy link
+          </button>
+        </div>
+      </div>
+
+      <div id="alert-container" class="mb-2" aria-live="polite"></div>
+
+      <form id="params" class="row g-3 align-items-center mb-3">
+        <div class="col-md-6">
+          <label for="fullTimeYear" class="form-label"
+            >Current full-time yearly salary</label
+          >
+          <input
+            id="fullTimeYear"
+            class="form-control"
+            type="number"
+            min="0"
+            step="100"
+            value="50000"
+          />
+        </div>
+
+        <div class="col-md-2">
+          <label for="currency" class="form-label">Currency</label>
+          <select id="currency" class="form-select" aria-label="Currency">
+            <option value="EUR" selected>euros (€)</option>
+            <option value="USD">dollars ($)</option>
+            <option value="GBP">pounds (£)</option>
+            <option value="JPY">yen (¥)</option>
+            <option value="AUD">australian dollar (A$)</option>
+            <option value="CAD">canadian dollar (C$)</option>
+            <option value="CHF">swiss franc (CHF)</option>
+            <option value="CNY">yuan / renminbi (¥)</option>
+            <option value="SEK">krona (kr)</option>
+            <option value="NZD">new zealand dollar (NZ$)</option>
+          </select>
+        </div>
+
+        <div class="col-md-4">
+          <label for="days" class="form-label">Days worked (per week)</label>
+          <select id="days" class="form-select" aria-label="Days worked">
+            <option value="5" selected>5 days (full-time)</option>
+            <option value="4">4 days (4/5 part-time)</option>
+            <option value="3">3 days (3/5 part-time)</option>
+            <option value="2">2 days (2/5 part-time)</option>
+            <option value="1">1 day (1/5 part-time)</option>
+          </select>
+        </div>
+      </form>
+
+      <table class="table table-striped table-hover">
+        <thead>
+          <tr>
+            <th>Yearly (full-time)</th>
+            <th class="part-col">Yearly (part-time)</th>
+            <th>Monthly</th>
+            <th>Raise %</th>
+            <th>Monthly difference</th>
+          </tr>
+        </thead>
+        <tbody id="results">
+          <!-- filled by JS -->
+        </tbody>
+      </table>
+    </div>
+
+    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/js/bootstrap.bundle.min.js"></script>
+    <script>
+      (function () {
+        // Top-10 currencies allowed (ISO codes)
+        const ALLOWED_CURRENCIES = [
+          "EUR",
+          "USD",
+          "GBP",
+          "JPY",
+          "AUD",
+          "CAD",
+          "CHF",
+          "CNY",
+          "SEK",
+          "NZD",
+        ];
+
+        // Simple HTML escape for alert content
+        function escapeHtml(str) {
+          return String(str)
+            .replace(/&/g, "&amp;")
+            .replace(/</g, "&lt;")
+            .replace(/>/g, "&gt;")
+            .replace(/"/g, "&quot;")
+            .replace(/'/g, "&#039;");
+        }
+
+        function showAlert(message, type = "warning", autoHide = true) {
+          const container = document.getElementById("alert-container");
+          if (!container) return;
+          // Map semantic type to Bootstrap alert class (support danger)
+          let alertClass = "alert-warning";
+          if (type === "success") alertClass = "alert-success";
+          else if (type === "danger") alertClass = "alert-danger";
+          container.innerHTML = `
+        <div class="alert ${alertClass} alert-dismissible fade show" role="alert">
+          ${escapeHtml(message)}
+          <button type="button" class="btn-close" data-bs-dismiss="alert" aria-label="Close"></button>
+        </div>`;
+          if (autoHide) {
+            setTimeout(() => {
+              container.innerHTML = "";
+            }, 3000);
+          }
+        }
+
+        // Read & validate URL params and apply to form
+        function readParamsAndApply() {
+          const params = new URLSearchParams(location.search);
+          let invalid = false;
+
+          const salaryParam = params.get("salary");
+          if (salaryParam !== null) {
+            if (!/^\d+$/.test(salaryParam) || Number(salaryParam) <= 0)
+              invalid = true;
+          }
+
+          const currencyParam = params.get("currency");
+          if (currencyParam !== null) {
+            const c = String(currencyParam || "").toUpperCase();
+            if (!ALLOWED_CURRENCIES.includes(c)) invalid = true;
+          }
+
+          const daysParam = params.get("days-per-week");
+          if (daysParam !== null) {
+            const d = Number(daysParam);
+            if (!Number.isInteger(d) || d < 1 || d > 5) invalid = true;
+          }
+
+          if (invalid) {
+            // reset URL to root and notify
+            history.replaceState(null, "", location.pathname);
+            showAlert(
+              "Invalid URL parameters detected — reset to defaults.",
+              "danger",
+              false,
+            );
+            return;
+          }
+
+          // apply safe params
+          if (salaryParam !== null && document.getElementById("fullTimeYear")) {
+            document.getElementById("fullTimeYear").value = salaryParam;
+          }
+
+          if (currencyParam !== null && document.getElementById("currency")) {
+            const code = String(currencyParam).toUpperCase();
+            const opt = Array.from(
+              document.getElementById("currency").options,
+            ).find((o) => o.value === code);
+            if (opt) document.getElementById("currency").value = code;
+          }
+
+          if (daysParam !== null && document.getElementById("days")) {
+            const daysEl = document.getElementById("days");
+            const opt = Array.from(daysEl.options).find(
+              (o) => o.value === daysParam,
+            );
+            if (opt) daysEl.value = daysParam;
+          }
+        }
+
+        // Update URL query from current form state
+        function updateUrlFromForm() {
+          const salaryEl = document.getElementById("fullTimeYear");
+          const currencyEl = document.getElementById("currency");
+          const daysEl = document.getElementById("days");
+          if (!salaryEl || !currencyEl || !daysEl) return;
+
+          const params = new URLSearchParams();
+
+          const salaryVal = String(salaryEl.value || "").trim();
+          if (salaryVal && /^\d+$/.test(salaryVal))
+            params.set("salary", salaryVal);
+
+          const code = String(currencyEl.value || "EUR").toUpperCase();
+          if (ALLOWED_CURRENCIES.includes(code)) params.set("currency", code);
+
+          const daysVal = Number(daysEl.value) || 5;
+          if (daysVal !== 5) params.set("days-per-week", String(daysVal));
+
+          const newQuery = params.toString();
+          const newUrl = location.pathname + (newQuery ? "?" + newQuery : "");
+          history.replaceState(null, "", newUrl);
+        }
+
+        // Wire inputs to update the URL
+        function wireFormToUrl() {
+          const ids = ["fullTimeYear", "currency", "days"];
+          ids.forEach((id) => {
+            const el = document.getElementById(id);
+            if (!el) return;
+            el.addEventListener("input", updateUrlFromForm);
+            el.addEventListener("change", updateUrlFromForm);
+          });
+
+          // Copy link button wiring
+          const copyBtn = document.getElementById("copyLink");
+          if (copyBtn) {
+            copyBtn.addEventListener("click", async function () {
+              try {
+                await navigator.clipboard.writeText(location.href);
+                showAlert("Link copied to clipboard.", "success", true);
+              } catch (err) {
+                showAlert(
+                  "Unable to copy link to clipboard.",
+                  "warning",
+                  false,
+                );
+              }
+            });
+          }
+        }
+
+        // Initialize: apply query params and wire events before app bootstraps
+        if (document.readyState === "loading") {
+          document.addEventListener("DOMContentLoaded", function () {
+            readParamsAndApply();
+            wireFormToUrl();
+          });
+        } else {
+          readParamsAndApply();
+          wireFormToUrl();
+        }
+      })();
+    </script>
+
+    <script src="js/app.js"></script>
+  </body>
+</html>
