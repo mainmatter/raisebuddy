@@ -14,29 +14,29 @@
 
 /* Page padding */
 body {
-    padding: 1rem;
+  padding: 1rem;
 }
 
 /* Monospace numbers and right-aligned cells for clean vertical alignment */
 table.table,
 table.table th,
 table.table td {
-    /* System and wide-coverage monospaced stack */
-    font-family:
-        ui-monospace, "SFMono-Regular", Menlo, Monaco, "Roboto Mono",
-        "Courier New", monospace;
-    text-align: right;
-    vertical-align: middle;
+  /* System and wide-coverage monospaced stack */
+  font-family:
+    ui-monospace, "SFMono-Regular", Menlo, Monaco, "Roboto Mono", "Courier New",
+    monospace;
+  text-align: right;
+  vertical-align: middle;
 }
 
 /* Table headers: */
 table.table th {
-    text-align: right;
+  text-align: right;
 }
 
 /* Small responsive tweak for very narrow viewports */
 @media (max-width: 420px) {
-    body {
-        padding: 0.75rem;
-    }
+  body {
+    padding: 0.75rem;
+  }
 }
