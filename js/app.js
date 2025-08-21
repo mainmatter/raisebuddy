@@ -78,7 +78,7 @@ class RaiseCalculator {
 
     const pushCandidate = (obj) =>
       candidates.push({
-        source: obj.source, // 'FT' | 'PT' | 'PCT'
+        source: obj.source, // 'FT' | 'PT' | 'PCT' | 'BASE'
         label: obj.label || "",
         fullYearly: Number(obj.fullYearly) || 0,
         partYearly: Number(obj.partYearly) || 0,
@@ -87,37 +87,48 @@ class RaiseCalculator {
         monthlyDiff: Number(obj.monthlyDiff) || 0,
       });
 
-    // Full-time +500 increments
-    // Determine the percent target (as percentage) and the required steps to reach it.
-    // We'll still compute enough +500 steps to cover the target, but we stop adding
-    // rows once the computed raise percent would exceed the percent target (so the
-    // table goes up to the configured percent target exactly).
-    const percentTargetIncrease =
-      baseFull * this._cfg.PERCENT_STEP * this._cfg.PERCENT_STEPS;
+    // Percent target (absolute and percent)
     const percentTargetPct =
       this._cfg.PERCENT_STEP * this._cfg.PERCENT_STEPS * 100;
-    const requiredIncSteps =
-      this._cfg.INCREMENT_AMOUNT > 0 && baseFull > 0
-        ? Math.ceil(percentTargetIncrease / this._cfg.INCREMENT_AMOUNT)
-        : this._cfg.INCREMENT_STEPS;
-    const ftSteps = Math.max(this._cfg.INCREMENT_STEPS, requiredIncSteps);
+    const percentTargetFactor =
+      1 + this._cfg.PERCENT_STEP * this._cfg.PERCENT_STEPS;
+    const targetFull = baseFull * percentTargetFactor;
 
-    for (let i = 1; i <= ftSteps; i++) {
-      const newFull = baseFull + this._cfg.INCREMENT_AMOUNT * i;
-      const newPart = newFull * partRatio;
+    // 1) Add the current salary (base)
+    pushCandidate({
+      source: "BASE",
+      label: "current",
+      fullYearly: baseFull,
+      partYearly: basePart,
+      monthly: baseMonthly,
+      raisePct: 0,
+      monthlyDiff: 0,
+    });
+
+    // 2) Round up the current salary to the nearest INCREMENT_AMOUNT boundary (but if already exact, use next +INCREMENT)
+    let secondFull;
+    if (this._cfg.INCREMENT_AMOUNT > 0) {
+      if (baseFull % this._cfg.INCREMENT_AMOUNT === 0) {
+        secondFull = baseFull + this._cfg.INCREMENT_AMOUNT;
+      } else {
+        secondFull =
+          Math.ceil(baseFull / this._cfg.INCREMENT_AMOUNT) *
+          this._cfg.INCREMENT_AMOUNT;
+      }
+    } else {
+      secondFull = baseFull;
+    }
+
+    if (secondFull !== baseFull) {
+      const newPart = secondFull * partRatio;
       const newMonthly = newPart / 12;
       const raisePct =
-        baseFull > 0 ? ((newFull - baseFull) / baseFull) * 100 : 0;
+        baseFull > 0 ? ((secondFull - baseFull) / baseFull) * 100 : 0;
       const monthlyDiff = newMonthly - baseMonthly;
-
-      // Stop adding full-time +500 increments once the percent raise would exceed the percent target.
-      // Allow equal to the target (<=). Only break when we have a valid baseFull to compare against.
-      if (baseFull > 0 && raisePct > percentTargetPct) break;
-
       pushCandidate({
         source: "FT",
-        label: `${i} × ${this._cfg.INCREMENT_AMOUNT}`,
-        fullYearly: newFull,
+        label: `rounded`,
+        fullYearly: secondFull,
         partYearly: newPart,
         monthly: newMonthly,
         raisePct,
@@ -125,33 +136,7 @@ class RaiseCalculator {
       });
     }
 
-    // Part-time +500 increments (implied full-time)
-    // Use the same number of steps as full-time increments but stop once the percent target is exceeded.
-    const ptSteps = ftSteps;
-    for (let i = 1; i <= ptSteps; i++) {
-      const newPartBase = basePart + this._cfg.INCREMENT_AMOUNT * i;
-      const impliedFull = partRatio > 0 ? newPartBase / partRatio : baseFull;
-      const newMonthly = newPartBase / 12;
-      const raisePct =
-        baseFull > 0 ? ((impliedFull - baseFull) / baseFull) * 100 : 0;
-      const monthlyDiff = newMonthly - baseMonthly;
-
-      // Stop adding part-time +500 increments once the percent raise would exceed the percent target.
-      // Only break when baseFull is positive so we don't prematurely stop when baseFull is zero.
-      if (baseFull > 0 && raisePct > percentTargetPct) break;
-
-      pushCandidate({
-        source: "PT",
-        label: `${i} × ${this._cfg.INCREMENT_AMOUNT} (over part-time)`,
-        fullYearly: impliedFull,
-        partYearly: newPartBase,
-        monthly: newMonthly,
-        raisePct,
-        monthlyDiff,
-      });
-    }
-
-    // Percent increments over full-time (0.5% steps)
+    // 3) Add percent increments (0.5% steps) up to the target (1..PERCENT_STEPS)
     for (let i = 1; i <= this._cfg.PERCENT_STEPS; i++) {
       const newFull = baseFull * (1 + this._cfg.PERCENT_STEP * i);
       const newPart = newFull * partRatio;
@@ -171,12 +156,104 @@ class RaiseCalculator {
       });
     }
 
-    // Deduplicate by rounded yearly full-time amount (integer euros)
-    const grouped = new Map();
+    // 4) +500 increments for full-time from the rounded-up (secondFull) up to and including the percent target
+    if (this._cfg.INCREMENT_AMOUNT > 0) {
+      // start from secondFull if it's defined, otherwise use baseFull + INCREMENT
+      let startFull =
+        typeof secondFull === "number"
+          ? secondFull
+          : baseFull + this._cfg.INCREMENT_AMOUNT;
+      // Ensure startFull is at least baseFull + INCREMENT_AMOUNT
+      if (startFull <= baseFull)
+        startFull = baseFull + this._cfg.INCREMENT_AMOUNT;
+
+      for (
+        let val = startFull;
+        val <= targetFull + 1e-8;
+        val += this._cfg.INCREMENT_AMOUNT
+      ) {
+        const newFull = val;
+        const newPart = newFull * partRatio;
+        const newMonthly = newPart / 12;
+        const raisePct =
+          baseFull > 0 ? ((newFull - baseFull) / baseFull) * 100 : 0;
+        const monthlyDiff = newMonthly - baseMonthly;
+
+        // include only up to target (allow equal)
+        if (baseFull > 0 && raisePct > percentTargetPct) break;
+
+        pushCandidate({
+          source: "FT",
+          label: `+${this._cfg.INCREMENT_AMOUNT}`,
+          fullYearly: newFull,
+          partYearly: newPart,
+          monthly: newMonthly,
+          raisePct,
+          monthlyDiff,
+        });
+      }
+    }
+
+    // 5) +500 increments for part-time from the rounded-up part value up to the percent target
+    if (this._cfg.INCREMENT_AMOUNT > 0 && partRatio > 0) {
+      // compute rounded up part-yearly equivalent to secondFull (if secondFull exists) or to basePart
+      let startPart;
+      if (typeof secondFull === "number") {
+        startPart = secondFull * partRatio;
+      } else {
+        if (basePart % this._cfg.INCREMENT_AMOUNT === 0) {
+          startPart = basePart + this._cfg.INCREMENT_AMOUNT;
+        } else {
+          startPart =
+            Math.ceil(basePart / this._cfg.INCREMENT_AMOUNT) *
+            this._cfg.INCREMENT_AMOUNT;
+        }
+      }
+      if (startPart <= basePart)
+        startPart = basePart + this._cfg.INCREMENT_AMOUNT;
+
+      for (
+        let partVal = startPart;
+        partVal <= targetFull * partRatio + 1e-8;
+        partVal += this._cfg.INCREMENT_AMOUNT
+      ) {
+        const newPartBase = partVal;
+        const impliedFull = partRatio > 0 ? newPartBase / partRatio : baseFull;
+        const newMonthly = newPartBase / 12;
+        const raisePct =
+          baseFull > 0 ? ((impliedFull - baseFull) / baseFull) * 100 : 0;
+        const monthlyDiff = newMonthly - baseMonthly;
+
+        if (baseFull > 0 && raisePct > percentTargetPct) break;
+
+        pushCandidate({
+          source: "PT",
+          label: `+${this._cfg.INCREMENT_AMOUNT} (part)`,
+          fullYearly: impliedFull,
+          partYearly: newPartBase,
+          monthly: newMonthly,
+          raisePct,
+          monthlyDiff,
+        });
+      }
+    }
+
+    // 6) Sort by full-yearly and dedupe by rounded integer full-yearly (keep the highest-priority source for a given rounded full)
+    // Priority order: FT > PT > PCT > BASE
+    const PRIORITY = { FT: 4, PT: 3, PCT: 2, BASE: 1 };
+    const rowsMap = new Map();
     candidates.forEach((c) => {
       const key = Math.round(c.fullYearly);
-      if (!grouped.has(key)) grouped.set(key, []);
-      grouped.get(key).push(c);
+      if (!rowsMap.has(key)) {
+        rowsMap.set(key, c);
+      } else {
+        const existing = rowsMap.get(key);
+        const newPr = PRIORITY[c.source] || 0;
+        const existingPr = PRIORITY[existing.source] || 0;
+        if (newPr > existingPr) {
+          rowsMap.set(key, c);
+        }
+      }
     });
 
     // Prepare final rows: base current salary first
@@ -192,52 +269,50 @@ class RaiseCalculator {
 
     this._appendRowForRendering(base, { snap: null, currency });
 
-    // Sort keys ascending and render one row per unique key
-    const keys = Array.from(grouped.keys()).sort((a, b) => a - b);
+    // Render deduped rows in ascending full-yearly order
+    const keys = Array.from(rowsMap.keys()).sort((a, b) => a - b);
     const baseKey = Math.round(baseFull);
+    const percentStepPct = this._cfg.PERCENT_STEP * 100;
+    const epsilon = 1e-6;
+
     for (const k of keys) {
       // Skip any candidate whose rounded yearly equals the base salary to avoid duplicate line
       if (k === baseKey) continue;
 
-      const group = grouped.get(k);
-      // Determine snap priority for this group:
-      // Prefer FT (yearly snapshot) over PT (part-time) over PCT (percent)
-      const hasFT = group.some((g) => g.source === "FT");
-      const hasPT = group.some((g) => g.source === "PT");
-      const hasPCT = group.some((g) => g.source === "PCT");
+      const rep = rowsMap.get(k);
+      if (!rep) continue;
 
-      // Choose representative candidate (prefer FT, else PT, else first)
-      let rep = group[0];
-      if (hasFT) rep = group.find((g) => g.source === "FT");
-      else if (hasPT) rep = group.find((g) => g.source === "PT");
+      // determine which cell to snap/highlight (based on the representative candidate source)
+      const snap =
+        rep.source === "FT"
+          ? "FT"
+          : rep.source === "PT"
+            ? "PT"
+            : rep.source === "PCT"
+              ? "PCT"
+              : null;
 
-      // determine which cell to snap/highlight
-      const snap = hasFT ? "FT" : hasPT ? "PT" : hasPCT ? "PCT" : null;
+      // Highlight rules (single-row based, no grouping):
+      const highlightFull =
+        Number.isFinite(rep.fullYearly) &&
+        Math.abs(
+          rep.fullYearly / this._cfg.INCREMENT_AMOUNT -
+            Math.round(rep.fullYearly / this._cfg.INCREMENT_AMOUNT),
+        ) < epsilon;
 
-      // Additional "round" highlighting:
-      // - highlightFull: any candidate in this group sits on an exact INCREMENT_AMOUNT boundary (e.g. multiple of 500)
-      // - highlightPart: same for part-time yearly amount
-      // - highlightPct: any candidate in this group falls exactly on a percent step (e.g. 0.5% increments)
-      const percentStepPct = this._cfg.PERCENT_STEP * 100;
-      const epsilon = 1e-6;
+      const highlightPart =
+        Number.isFinite(rep.partYearly) &&
+        Math.abs(
+          rep.partYearly / this._cfg.INCREMENT_AMOUNT -
+            Math.round(rep.partYearly / this._cfg.INCREMENT_AMOUNT),
+        ) < epsilon;
 
-      const highlightFull = group.some((g) => {
-        if (!Number.isFinite(g.fullYearly)) return false;
-        const ratio = g.fullYearly / this._cfg.INCREMENT_AMOUNT;
-        return Math.abs(ratio - Math.round(ratio)) < epsilon;
-      });
-
-      const highlightPart = group.some((g) => {
-        if (!Number.isFinite(g.partYearly)) return false;
-        const ratio = g.partYearly / this._cfg.INCREMENT_AMOUNT;
-        return Math.abs(ratio - Math.round(ratio)) < epsilon;
-      });
-
-      const highlightPct = group.some((g) => {
-        if (!Number.isFinite(g.raisePct)) return false;
-        const ratio = g.raisePct / percentStepPct;
-        return Math.abs(ratio - Math.round(ratio)) < epsilon;
-      });
+      const highlightPct =
+        Number.isFinite(rep.raisePct) &&
+        Math.abs(
+          rep.raisePct / percentStepPct -
+            Math.round(rep.raisePct / percentStepPct),
+        ) < epsilon;
 
       this._appendRowForRendering(rep, {
         snap,
