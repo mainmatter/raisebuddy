@@ -85,6 +85,7 @@ class RaiseCalculator {
         monthly: Number(obj.monthly) || 0,
         raisePct: Number(obj.raisePct) || 0,
         monthlyDiff: Number(obj.monthlyDiff) || 0,
+        yearlyDiff: Number(obj.yearlyDiff) || 0,
       });
 
     // Percent target (absolute and percent)
@@ -103,6 +104,7 @@ class RaiseCalculator {
       monthly: baseMonthly,
       raisePct: 0,
       monthlyDiff: 0,
+      yearlyDiff: 0,
     });
 
     // 2) Round up the current salary to the nearest INCREMENT_AMOUNT boundary (but if already exact, use next +INCREMENT)
@@ -125,6 +127,7 @@ class RaiseCalculator {
       const raisePct =
         baseFull > 0 ? ((secondFull - baseFull) / baseFull) * 100 : 0;
       const monthlyDiff = newMonthly - baseMonthly;
+      const yearlyDiff = secondFull - baseFull;
       pushCandidate({
         source: "FT",
         label: `rounded`,
@@ -133,6 +136,7 @@ class RaiseCalculator {
         monthly: newMonthly,
         raisePct,
         monthlyDiff,
+        yearlyDiff,
       });
     }
 
@@ -144,6 +148,7 @@ class RaiseCalculator {
       const raisePct =
         baseFull > 0 ? ((newFull - baseFull) / baseFull) * 100 : 0;
       const monthlyDiff = newMonthly - baseMonthly;
+      const yearlyDiff = newFull - baseFull;
 
       pushCandidate({
         source: "PCT",
@@ -153,6 +158,7 @@ class RaiseCalculator {
         monthly: newMonthly,
         raisePct,
         monthlyDiff,
+        yearlyDiff,
       });
     }
 
@@ -190,6 +196,7 @@ class RaiseCalculator {
           monthly: newMonthly,
           raisePct,
           monthlyDiff,
+          yearlyDiff: newFull - baseFull,
         });
       }
     }
@@ -234,6 +241,7 @@ class RaiseCalculator {
           monthly: newMonthly,
           raisePct,
           monthlyDiff,
+          yearlyDiff: impliedFull - baseFull,
         });
       }
     }
@@ -336,10 +344,11 @@ class RaiseCalculator {
     } = opts;
 
     // Build column values (strings/html)
-    // Columns: Yearly (full-time), Yearly (part-time), Monthly, Raise (%), Monthly difference
+    // Columns: Yearly (full-time), Yearly (part-time), Yearly Δ, Monthly, Raise (%), Monthly Δ
 
     const fullVal = this._formatCurrency(candidate.fullYearly, currency);
     const partVal = this._formatCurrency(candidate.partYearly, currency);
+    const yearlyDiffVal = this._formatCurrency(candidate.yearlyDiff, currency);
     const monthlyVal = this._formatCurrency(candidate.monthly, currency);
     const raisePctVal = `${candidate.raisePct.toFixed(2)}%`;
     const monthlyDiffVal = this._formatCurrency(
@@ -365,9 +374,17 @@ class RaiseCalculator {
 
     // monthly diff always displayed (no part-only behavior)
     const diffCell = { text: monthlyDiffVal };
+    const yearlyDiffCell = { text: yearlyDiffVal };
 
     // Append row (cells order matches header)
-    this._addRow([fullCell, partCell, monthlyVal, pctCell, diffCell]);
+    this._addRow([
+      fullCell,
+      partCell,
+      monthlyVal,
+      pctCell,
+      yearlyDiffCell,
+      diffCell,
+    ]);
   }
 
   _resolveEl(selectorOrEl) {
