@@ -1,7 +1,7 @@
 /**
- * raisor/js/app.js
+ * raisebuddy/js/app.js
  *
- * RaiseCalculator - single-file UI driver for raisor/index.html
+ * RaiseCalculator - single-file UI driver for raisebuddy/index.html
  *
  * Responsibilities:
  *  - Build combined candidate raises (full-time +500, part-time +500, 0.5% steps)
@@ -49,7 +49,18 @@ class RaiseCalculator {
     // cached index of the "Yearly (part-time)" header column (0-based)
     this._partColIndex = null;
 
+    // Set of highlighted row keys (strings)
+    this._highlighted = new Set();
+
+    // Reference to the optional "Reset highlighted rows" button
+    this._resetBtn = null;
+
+    // Bind instance methods
     this._onInput = this._onInput.bind(this);
+    this._onRowClick = this._onRowClick.bind(this);
+    this._onResetClick = this._onResetClick
+      ? this._onResetClick.bind(this)
+      : null;
   }
 
   init() {
@@ -377,14 +388,12 @@ class RaiseCalculator {
     const yearlyDiffCell = { text: yearlyDiffVal };
 
     // Append row (cells order matches header)
-    this._addRow([
-      fullCell,
-      partCell,
-      monthlyVal,
-      pctCell,
-      yearlyDiffCell,
-      diffCell,
-    ]);
+    // Use rounded fullYearly as a stable key (string)
+    const key = String(Math.round(candidate.fullYearly || 0));
+    this._addRow(
+      [fullCell, partCell, monthlyVal, pctCell, yearlyDiffCell, diffCell],
+      { key },
+    );
   }
 
   _resolveEl(selectorOrEl) {
@@ -407,10 +416,147 @@ class RaiseCalculator {
   }
 
   _bindEvents() {
-    const { currency, fullTime, days } = this._els;
-    [currency, fullTime, days].forEach((el) =>
-      el.addEventListener("input", this._onInput),
-    );
+    const { currency, fullTime, days, results } = this._els;
+
+    // Existing render-on-input behavior
+    [currency, fullTime, days].forEach((el) => {
+      el.addEventListener("input", this._onInput);
+      // When the form updates the URL (index.html's updateUrlFromForm), it may replace the query.
+      // Re-apply our highlights param immediately after (allow other handlers to run first).
+      el.addEventListener("input", () =>
+        setTimeout(() => this._updateUrlWithHighlights(), 0),
+      );
+      el.addEventListener("change", () =>
+        setTimeout(() => this._updateUrlWithHighlights(), 0),
+      );
+    });
+
+    // Row click handling (event delegation)
+    if (results) {
+      results.addEventListener("click", this._onRowClick);
+    }
+
+    // Ensure the nav button exists (will be shown only when needed)
+    this._ensureNavButtons();
+
+    // Restore highlights from URL so initial render can reflect them
+    this._restoreHighlightsFromUrl();
+  }
+
+  // Restore highlighted keys from the URL `highlights` parameter (comma separated)
+  _restoreHighlightsFromUrl() {
+    try {
+      const params = new URLSearchParams(location.search);
+      const highlights = params.get("highlights");
+      if (!highlights) return;
+      const parts = highlights
+        .split(",")
+        .map((p) => String(p).trim())
+        .filter(Boolean);
+      this._highlighted = new Set(parts);
+    } catch (err) {
+      // ignore malformed param
+      this._highlighted = new Set();
+    }
+  }
+
+  // Update the URL `highlights` parameter to reflect current highlighted set.
+  // This merges with existing params instead of replacing them.
+  _updateUrlWithHighlights() {
+    try {
+      const params = new URLSearchParams(location.search);
+
+      if (this._highlighted.size > 0) {
+        params.set("highlights", Array.from(this._highlighted).join(","));
+      } else {
+        params.delete("highlights");
+      }
+
+      const newQuery = params.toString();
+      const newUrl = location.pathname + (newQuery ? "?" + newQuery : "");
+      history.replaceState(null, "", newUrl);
+
+      // show/hide reset button based on current highlights
+      this._showOrHideResetButton();
+    } catch (err) {
+      // noop on any errors
+    }
+  }
+
+  // Click handler (delegated) for table rows
+  _onRowClick(ev) {
+    // Only handle clicks inside tbody rows
+    const tr = ev.target && ev.target.closest ? ev.target.closest("tr") : null;
+    if (!tr || !this._els.results || !this._els.results.contains(tr)) return;
+
+    const key = tr.dataset && tr.dataset.key ? String(tr.dataset.key) : null;
+    if (!key) return;
+
+    if (this._highlighted.has(key)) {
+      this._highlighted.delete(key);
+      tr.classList.remove("table-primary");
+    } else {
+      this._highlighted.add(key);
+      tr.classList.add("table-primary");
+    }
+
+    // Update URL and reset button visibility
+    this._updateUrlWithHighlights();
+  }
+
+  // Create or find the "Reset highlighted rows" button and wire its handler.
+  // It will be inserted just before the existing #copyLink button if possible.
+  _ensureNavButtons() {
+    try {
+      const copyBtn = document.getElementById("copyLink");
+      if (!copyBtn) return;
+
+      // If the reset button already exists, keep reference
+      let resetBtn = document.getElementById("resetHighlights");
+      if (!resetBtn) {
+        resetBtn = document.createElement("button");
+        resetBtn.type = "button";
+        resetBtn.id = "resetHighlights";
+        resetBtn.className = "btn btn-sm btn-outline-secondary me-2";
+        resetBtn.textContent = "Reset highlighted rows";
+        resetBtn.style.display = "none";
+        resetBtn.addEventListener("click", () => this._onResetClick());
+        // Insert before copyBtn in the same container if possible
+        if (copyBtn.parentNode) {
+          copyBtn.parentNode.insertBefore(resetBtn, copyBtn);
+        } else {
+          copyBtn.before(resetBtn);
+        }
+      }
+      this._resetBtn = resetBtn;
+
+      // Update visibility based on current highlighted set
+      this._showOrHideResetButton();
+    } catch (err) {
+      // ignore
+    }
+  }
+
+  _showOrHideResetButton() {
+    if (!this._resetBtn) return;
+    if (this._highlighted.size > 0) {
+      this._resetBtn.style.display = "";
+    } else {
+      this._resetBtn.style.display = "none";
+    }
+  }
+
+  _onResetClick() {
+    // Clear highlights and update UI + URL
+    this._highlighted.clear();
+
+    // Remove class from all rendered rows
+    const rows = this._els.results
+      ? Array.from(this._els.results.querySelectorAll("tr"))
+      : [];
+    rows.forEach((r) => r.classList.remove("table-primary"));
+
+    this._updateUrlWithHighlights();
   }
 
   _onInput() {
@@ -471,6 +617,13 @@ class RaiseCalculator {
     const tr = document.createElement("tr");
     if (opts.isSeparator) tr.className = "table-light";
 
+    // If a key was provided, add it as a data attribute for selection
+    if (opts.key) {
+      tr.dataset.key = String(opts.key);
+      // make rows show pointer to indicate clickability
+      tr.style.cursor = "pointer";
+    }
+
     // Snapshot header cells so newly added rows mirror header hide state automatically
     const table = this._els.results ? this._els.results.closest("table") : null;
     const headerCells = table
@@ -502,6 +655,15 @@ class RaiseCalculator {
 
       tr.appendChild(td);
     });
+
+    // If this row corresponds to a highlighted key, mark it visually
+    if (
+      tr.dataset &&
+      tr.dataset.key &&
+      this._highlighted.has(String(tr.dataset.key))
+    ) {
+      tr.classList.add("table-primary");
+    }
 
     this._els.results.appendChild(tr);
   }
