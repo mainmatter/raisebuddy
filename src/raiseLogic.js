@@ -84,65 +84,256 @@ class RaiseCalculator {
     const hidePart = days === 5;
     this._togglePartColumn(hidePart);
 
-    // Build candidates via the pure logic module (delegated)
-    // Try to resolve a buildRows function from the environment (window) or via require()
-    let buildRowsFn = null;
-    try {
-      if (typeof window !== "undefined" && window.buildRows)
-        buildRowsFn = window.buildRows;
-    } catch (err) {
-      /* ignore */
-    }
-    try {
-      if (!buildRowsFn && typeof require === "function") {
-        // Import the pure logic from src for Node/test environments
-        // The module exports the function as module.exports (and also as buildRows)
-        const maybe = require("../src/buildRows");
-        buildRowsFn =
-          typeof maybe === "function"
-            ? maybe
-            : maybe && maybe.buildRows
-              ? maybe.buildRows
-              : null;
+    // Build candidates
+    const candidates = [];
+
+    const pushCandidate = (obj) =>
+      candidates.push({
+        source: obj.source, // 'FT' | 'PT' | 'PCT' | 'BASE'
+        label: obj.label || "",
+        fullYearly: Number(obj.fullYearly) || 0,
+        partYearly: Number(obj.partYearly) || 0,
+        monthly: Number(obj.monthly) || 0,
+        raisePct: Number(obj.raisePct) || 0,
+        monthlyDiff: Number(obj.monthlyDiff) || 0,
+        yearlyDiff: Number(obj.yearlyDiff) || 0,
+      });
+
+    // Percent target (absolute and percent)
+    const percentTargetPct =
+      this._cfg.PERCENT_STEP * this._cfg.PERCENT_STEPS * 100;
+    const percentTargetFactor =
+      1 + this._cfg.PERCENT_STEP * this._cfg.PERCENT_STEPS;
+    const targetFull = baseFull * percentTargetFactor;
+
+    // 1) Add the current salary (base)
+    pushCandidate({
+      source: "BASE",
+      label: "current",
+      fullYearly: baseFull,
+      partYearly: basePart,
+      monthly: baseMonthly,
+      raisePct: 0,
+      monthlyDiff: 0,
+      yearlyDiff: 0,
+    });
+
+    // 2) Round up the current salary to the nearest INCREMENT_AMOUNT boundary (but if already exact, use next +INCREMENT)
+    let secondFull;
+    if (this._cfg.INCREMENT_AMOUNT > 0) {
+      if (baseFull % this._cfg.INCREMENT_AMOUNT === 0) {
+        secondFull = baseFull + this._cfg.INCREMENT_AMOUNT;
+      } else {
+        secondFull =
+          Math.ceil(baseFull / this._cfg.INCREMENT_AMOUNT) *
+          this._cfg.INCREMENT_AMOUNT;
       }
-    } catch (err) {
-      /* ignore */
+    } else {
+      secondFull = baseFull;
     }
 
-    if (!buildRowsFn) {
-      // If the helper isn't available, surface a clear error so failures are obvious
-      throw new Error(
-        "buildRows helper not available; ensure raisebuddy/src/buildRows.js is present and loadable",
-      );
+    if (secondFull !== baseFull) {
+      const newPart = secondFull * partRatio;
+      const newMonthly = newPart / 12;
+      const raisePct =
+        baseFull > 0 ? ((secondFull - baseFull) / baseFull) * 100 : 0;
+      const monthlyDiff = newMonthly - baseMonthly;
+      const yearlyDiff = secondFull - baseFull;
+      pushCandidate({
+        source: "FT",
+        label: `rounded`,
+        fullYearly: secondFull,
+        partYearly: newPart,
+        monthly: newMonthly,
+        raisePct,
+        monthlyDiff,
+        yearlyDiff,
+      });
     }
 
-    // Build the final JSON-ready rows using the pure logic
-    const finalRows = buildRowsFn({ baseFull, days, config: this._cfg });
+    // 3) Add percent increments (0.5% steps) up to the target (1..PERCENT_STEPS)
+    for (let i = 1; i <= this._cfg.PERCENT_STEPS; i++) {
+      const newFull = baseFull * (1 + this._cfg.PERCENT_STEP * i);
+      const newPart = newFull * partRatio;
+      const newMonthly = newPart / 12;
+      const raisePct =
+        baseFull > 0 ? ((newFull - baseFull) / baseFull) * 100 : 0;
+      const monthlyDiff = newMonthly - baseMonthly;
+      const yearlyDiff = newFull - baseFull;
 
-    // Render rows using existing rendering helper (which does currency formatting and DOM insertion)
+      pushCandidate({
+        source: "PCT",
+        label: `${(this._cfg.PERCENT_STEP * 100 * i).toFixed(1)}%`,
+        fullYearly: newFull,
+        partYearly: newPart,
+        monthly: newMonthly,
+        raisePct,
+        monthlyDiff,
+        yearlyDiff,
+      });
+    }
+
+    // 4) +500 increments for full-time from the rounded-up (secondFull) up to and including the percent target
+    if (this._cfg.INCREMENT_AMOUNT > 0) {
+      // start from secondFull if it's defined, otherwise use baseFull + INCREMENT
+      let startFull =
+        typeof secondFull === "number"
+          ? secondFull
+          : baseFull + this._cfg.INCREMENT_AMOUNT;
+      // Ensure startFull is at least baseFull + INCREMENT_AMOUNT
+      if (startFull <= baseFull)
+        startFull = baseFull + this._cfg.INCREMENT_AMOUNT;
+
+      for (
+        let val = startFull;
+        val <= targetFull + 1e-8;
+        val += this._cfg.INCREMENT_AMOUNT
+      ) {
+        const newFull = val;
+        const newPart = newFull * partRatio;
+        const newMonthly = newPart / 12;
+        const raisePct =
+          baseFull > 0 ? ((newFull - baseFull) / baseFull) * 100 : 0;
+        const monthlyDiff = newMonthly - baseMonthly;
+
+        // include only up to target (allow equal)
+        if (baseFull > 0 && raisePct > percentTargetPct) break;
+
+        pushCandidate({
+          source: "FT",
+          label: `+${this._cfg.INCREMENT_AMOUNT}`,
+          fullYearly: newFull,
+          partYearly: newPart,
+          monthly: newMonthly,
+          raisePct,
+          monthlyDiff,
+          yearlyDiff: newFull - baseFull,
+        });
+      }
+    }
+
+    // 5) +500 increments for part-time from the rounded-up part value up to the percent target
+    if (this._cfg.INCREMENT_AMOUNT > 0 && partRatio > 0) {
+      // compute rounded up part-yearly equivalent to secondFull (if secondFull exists) or to basePart
+      let startPart;
+      if (typeof secondFull === "number") {
+        startPart = secondFull * partRatio;
+      } else {
+        if (basePart % this._cfg.INCREMENT_AMOUNT === 0) {
+          startPart = basePart + this._cfg.INCREMENT_AMOUNT;
+        } else {
+          startPart =
+            Math.ceil(basePart / this._cfg.INCREMENT_AMOUNT) *
+            this._cfg.INCREMENT_AMOUNT;
+        }
+      }
+      if (startPart <= basePart)
+        startPart = basePart + this._cfg.INCREMENT_AMOUNT;
+
+      for (
+        let partVal = startPart;
+        partVal <= targetFull * partRatio + 1e-8;
+        partVal += this._cfg.INCREMENT_AMOUNT
+      ) {
+        const newPartBase = partVal;
+        const impliedFull = partRatio > 0 ? newPartBase / partRatio : baseFull;
+        const newMonthly = newPartBase / 12;
+        const raisePct =
+          baseFull > 0 ? ((impliedFull - baseFull) / baseFull) * 100 : 0;
+        const monthlyDiff = newMonthly - baseMonthly;
+
+        if (baseFull > 0 && raisePct > percentTargetPct) break;
+
+        pushCandidate({
+          source: "PT",
+          label: `+${this._cfg.INCREMENT_AMOUNT} (part)`,
+          fullYearly: impliedFull,
+          partYearly: newPartBase,
+          monthly: newMonthly,
+          raisePct,
+          monthlyDiff,
+          yearlyDiff: impliedFull - baseFull,
+        });
+      }
+    }
+
+    // 6) Sort by full-yearly and dedupe by rounded integer full-yearly (keep the highest-priority source for a given rounded full)
+    // Priority order: FT > PT > PCT > BASE
+    const PRIORITY = { FT: 4, PT: 3, PCT: 2, BASE: 1 };
+    const rowsMap = new Map();
+    candidates.forEach((c) => {
+      const key = Math.round(c.fullYearly);
+      if (!rowsMap.has(key)) {
+        rowsMap.set(key, c);
+      } else {
+        const existing = rowsMap.get(key);
+        const newPr = PRIORITY[c.source] || 0;
+        const existingPr = PRIORITY[existing.source] || 0;
+        if (newPr > existingPr) {
+          rowsMap.set(key, c);
+        }
+      }
+    });
+
+    // Prepare final rows: base current salary first
     this._clearRows();
 
-    for (const row of finalRows) {
+    const base = {
+      fullYearly: baseFull,
+      partYearly: basePart,
+      monthly: baseMonthly,
+      raisePct: 0,
+      monthlyDiff: 0,
+    };
+
+    this._appendRowForRendering(base, { snap: null, currency });
+
+    // Render deduped rows in ascending full-yearly order
+    const keys = Array.from(rowsMap.keys()).sort((a, b) => a - b);
+    const baseKey = Math.round(baseFull);
+    const percentStepPct = this._cfg.PERCENT_STEP * 100;
+    const epsilon = 1e-6;
+
+    for (const k of keys) {
+      // Skip any candidate whose rounded yearly equals the base salary to avoid duplicate line
+      if (k === baseKey) continue;
+
+      const rep = rowsMap.get(k);
+      if (!rep) continue;
+
+      // determine which cell to snap/highlight (based on the representative candidate source)
       const snap =
-        row.source === "FT"
+        rep.source === "FT"
           ? "FT"
-          : row.source === "PT"
+          : rep.source === "PT"
             ? "PT"
-            : row.source === "PCT"
+            : rep.source === "PCT"
               ? "PCT"
               : null;
 
+      // Highlight rules (single-row based, no grouping):
       const highlightFull =
-        Array.isArray(row.highlightedCells) &&
-        row.highlightedCells.includes("fullYearly");
-      const highlightPart =
-        Array.isArray(row.highlightedCells) &&
-        row.highlightedCells.includes("partYearly");
-      const highlightPct =
-        Array.isArray(row.highlightedCells) &&
-        row.highlightedCells.includes("raisePct");
+        Number.isFinite(rep.fullYearly) &&
+        Math.abs(
+          rep.fullYearly / this._cfg.INCREMENT_AMOUNT -
+            Math.round(rep.fullYearly / this._cfg.INCREMENT_AMOUNT),
+        ) < epsilon;
 
-      this._appendRowForRendering(row, {
+      const highlightPart =
+        Number.isFinite(rep.partYearly) &&
+        Math.abs(
+          rep.partYearly / this._cfg.INCREMENT_AMOUNT -
+            Math.round(rep.partYearly / this._cfg.INCREMENT_AMOUNT),
+        ) < epsilon;
+
+      const highlightPct =
+        Number.isFinite(rep.raisePct) &&
+        Math.abs(
+          rep.raisePct / percentStepPct -
+            Math.round(rep.raisePct / percentStepPct),
+        ) < epsilon;
+
+      this._appendRowForRendering(rep, {
         snap,
         currency,
         highlightFull,
@@ -489,51 +680,12 @@ class RaiseCalculator {
 
 /* Auto-bootstrap */
 (function () {
-  // Expose the constructor immediately so tests or other tooling that require/import
-  // this script can access the class before the auto-bootstrap flow runs.
-  try {
-    if (typeof globalThis !== "undefined")
-      globalThis.RaiseCalculator = RaiseCalculator;
-  } catch (err) {
-    // ignore
-  }
-  if (typeof window !== "undefined") {
-    try {
-      window.RaiseCalculator = RaiseCalculator;
-    } catch (err) {
-      // ignore environments that disallow writing to window
-    }
-  }
-  // Also attach to globalThis so environments that reference the global object
-  // differently (e.g. some test runners) can find the constructor.
-  if (typeof globalThis !== "undefined") {
-    try {
-      globalThis.RaiseCalculator = RaiseCalculator;
-    } catch (err) {
-      // ignore
-    }
-  }
-
   function bootstrap() {
     try {
       const instance = new RaiseCalculator().init();
-      try {
-        if (typeof globalThis !== "undefined")
-          globalThis.raiseCalculatorInstance = instance;
-      } catch (err) {}
       if (typeof window !== "undefined") {
-        // re-attach to ensure the constructor and instance are available
         window.RaiseCalculator = RaiseCalculator;
         window.raiseCalculatorInstance = instance;
-      }
-      if (typeof globalThis !== "undefined") {
-        // also attach the instance to globalThis for non-window globals
-        try {
-          globalThis.RaiseCalculator = RaiseCalculator;
-          globalThis.raiseCalculatorInstance = instance;
-        } catch (err) {
-          // ignore
-        }
       }
     } catch (err) {
       console.error("RaiseCalculator bootstrap failed:", err);
@@ -548,16 +700,3 @@ class RaiseCalculator {
     }
   }
 })();
-
-// Export the constructor for CommonJS test environments (Node/jest).
-// This is safe to attempt in browsers because `module` may be undefined there.
-try {
-  if (typeof module !== "undefined" && module && module.exports) {
-    module.exports = typeof module.exports === "object" ? module.exports : {};
-    // If module.exports is already used by other code, ensure we don't clobber non-conflicting properties.
-    // Assign the constructor directly so `require('./js/app.js')` yields the class in tests.
-    module.exports = RaiseCalculator;
-  }
-} catch (err) {
-  // ignore if module is not writable in this environment
-}

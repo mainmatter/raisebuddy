@@ -1,0 +1,29 @@
+{
+  "name": "raisebuddy",
+  "version": "0.1.0",
+  "private": true,
+  "description": "RaiseBuddy UI logic and tests",
+  "scripts": {
+    "test": "jest",
+    "test:watch": "jest --watch",
+    "test:coverage": "jest --coverage"
+  },
+  "jest": {
+    "testEnvironment": "node",
+    "testMatch": [
+      "<rootDir>/test/**/*.test.js",
+      "<rootDir>/test/**/*.spec.js"
+    ],
+    "moduleFileExtensions": [
+      "js",
+      "json"
+    ],
+    "collectCoverageFrom": [
+      "js/**/*.js"
+    ]
+  },
+  "devDependencies": {
+    "jest": "^29.6.1",
+    "jsdom": "^21.1.0"
+  }
+}
